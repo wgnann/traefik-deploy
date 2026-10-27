@@ -9,6 +9,7 @@
     traefik_bin_dir: "/usr/local/bin"
     traefik_config_dir: "/etc/traefik"
     traefik_state_dir: "/var/lib/traefik"
+    traefik_log_dir: "/var/log/traefik"
 
     # Set these for your deployment.
     acme_email: "admin@example.com"
@@ -20,6 +21,7 @@
       ansible.builtin.package:
         name:
           - tar
+          - logrotate
         state: present
 
     - name: Create Traefik system group
@@ -35,7 +37,7 @@
         system: true
         shell: /usr/sbin/nologin
         create_home: false
-        home: /var/lib/traefik
+        home: "{{ traefik_state_dir }}"
 
     - name: Ensure Traefik binary directory exists
       ansible.builtin.file:
@@ -61,7 +63,6 @@
         owner: root
         group: root
         mode: "0600"
-      notify: Restart traefik
 
     - name: Extract Traefik binary
       ansible.builtin.unarchive:
@@ -73,7 +74,6 @@
         mode: "0755"
         include:
           - traefik
-      notify: Restart traefik
 
     - name: Ensure Traefik configuration directory exists
       ansible.builtin.file:
@@ -99,6 +99,14 @@
         group: traefik
         mode: "0700"
 
+    - name: Ensure Traefik logging directory exists
+      ansible.builtin.file:
+        path: "{{ traefik_log_dir }}"
+        state: directory
+        owner: traefik
+        group: traefik
+        mode: "0750"
+
     - name: Ensure ACME storage file exists
       ansible.builtin.file:
         path: "{{ traefik_state_dir }}/acme.json"
@@ -115,10 +123,22 @@
         owner: root
         group: traefik
         mode: "0640"
+        validate: "{{ traefik_bin_dir }}/traefik config check --configfile=%s"
         content: |
           api:
             dashboard: true
             insecure: false
+
+          log:
+            level: INFO
+            format: json
+
+          accessLog:
+            filePath: "{{ traefik_log_dir }}/access.log"
+            format: json
+            bufferLines: 100
+            filters:
+              statusCodes: ["200-299", "400-599"]
 
           entryPoints:
             web:
@@ -145,6 +165,26 @@
                   entryPoint: web
       notify: Restart traefik
 
+    - name: Deploy logrotate policy for Traefik
+      ansible.builtin.copy:
+        dest: /etc/logrotate.d/traefik
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          {{ traefik_log_dir }}/*.log {
+              daily
+              rotate 14
+              missingok
+              notifempty
+              compress
+              delaycompress
+              sharedscripts
+              postrotate
+                  /bin/systemctl kill -s HUP traefik.service
+              endscript
+          }
+
     - name: Deploy Traefik systemd service
       ansible.builtin.copy:
         dest: /etc/systemd/system/traefik.service
@@ -159,11 +199,11 @@
           After=network-online.target
 
           [Service]
-          Type=simple
+          Type=notify
           User=traefik
           Group=traefik
           ExecStart={{ traefik_bin_dir }}/traefik --configfile={{ traefik_config_dir }}/traefik.yml
-          Restart=on-failure
+          Restart=always
           RestartSec=5s
           LimitNOFILE=65536
 
@@ -180,7 +220,7 @@
           ProtectControlGroups=true
           RestrictSUIDSGID=true
           ReadOnlyPaths={{ traefik_config_dir }}
-          ReadWritePaths={{ traefik_state_dir }}
+          ReadWritePaths={{ traefik_state_dir }} {{ traefik_log_dir }}
 
           [Install]
           WantedBy=multi-user.target
