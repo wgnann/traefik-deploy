@@ -12,9 +12,9 @@
     traefik_log_dir: "/var/log/traefik"
 
     # Set these for your deployment.
-    acme_email: "admin@example.com"
+    acme_email: "admin@ime.usp.br"
     # SHA-256 of the matching Traefik release archive.
-    traefik_archive_sha256: "REPLACE_WITH_VERIFIED_SHA256"
+    traefik_archive_sha256: "759a7bc0d66b74c588255ed9e41c7f9d4aba60bdb7bce9dde551b1268a55eb07"
 
   tasks:
     - name: Ensure required system tools are present
@@ -123,7 +123,6 @@
         owner: root
         group: traefik
         mode: "0640"
-        validate: "{{ traefik_bin_dir }}/traefik config check --configfile=%s"
         content: |
           api:
             dashboard: true
@@ -136,7 +135,6 @@
           accessLog:
             filePath: "{{ traefik_log_dir }}/access.log"
             format: json
-            bufferLines: 100
             filters:
               statusCodes: ["200-299", "400-599"]
 
@@ -200,6 +198,7 @@
 
           [Service]
           Type=notify
+          NotifyAccess=all
           User=traefik
           Group=traefik
           ExecStart={{ traefik_bin_dir }}/traefik --configfile={{ traefik_config_dir }}/traefik.yml
