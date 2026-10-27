@@ -1,54 +1,79 @@
 ---
-- name: Install Traefik Native Binary on Debian 13
+- name: Install Traefik native binary on Debian 13
   hosts: all
-  become: yes
+  become: true
+
   vars:
-    traefik_version: "3.7.16" # Pin your preferred v3 minor version
-    traefik_arch: "amd64"    # Use arm64 if deploying to Raspberry Pi/ARM
+    traefik_version: "3.7.16"
+    traefik_arch: "amd64"
     traefik_bin_dir: "/usr/local/bin"
     traefik_config_dir: "/etc/traefik"
+    traefik_state_dir: "/var/lib/traefik"
+
+    # Set these for your deployment.
+    acme_email: "admin@example.com"
+    # SHA-256 of the matching Traefik release archive.
+    traefik_archive_sha256: "REPLACE_WITH_VERIFIED_SHA256"
 
   tasks:
     - name: Ensure required system tools are present
       ansible.builtin.package:
         name:
           - tar
-          - libcap2-bin # Required for the 'setcap' module
         state: present
 
-    - name: Create unprivileged Traefik system group
+    - name: Create Traefik system group
       ansible.builtin.group:
         name: traefik
-        system: yes
+        system: true
         state: present
 
-    - name: Create unprivileged Traefik system user
+    - name: Create Traefik system user
       ansible.builtin.user:
         name: traefik
         group: traefik
-        system: yes
+        system: true
         shell: /usr/sbin/nologin
-        create_home: no
-        home: /var/www
+        create_home: false
+        home: /var/lib/traefik
 
-    - name: Download and extract Traefik binary
-      ansible.builtin.unarchive:
-        src: "https://github.com/traefik/traefik/releases/download/v{{ traefik_version }}/traefik_v{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
-        dest: "{{ traefik_bin_dir }}"
-        remote_src: yes
+    - name: Ensure Traefik binary directory exists
+      ansible.builtin.file:
+        path: "{{ traefik_bin_dir }}"
+        state: directory
         owner: root
         group: root
-        mode: '0755'
-        exclude:
-          - LICENSE.md
-          - README.md
+        mode: "0755"
+
+    - name: Ensure temporary download directory exists
+      ansible.builtin.file:
+        path: /var/tmp/traefik-install
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Download and verify Traefik release archive
+      ansible.builtin.get_url:
+        url: "https://github.com/traefik/traefik/releases/download/v{{ traefik_version }}/traefik_v{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
+        dest: "/var/tmp/traefik-install/traefik.tar.gz"
+        checksum: "sha256:{{ traefik_archive_sha256 }}"
+        owner: root
+        group: root
+        mode: "0600"
       notify: Restart traefik
 
-    - name: Allow Traefik to bind to privileged ports (<1024) without root
-      community.general.capabilities:
-        path: "{{ traefik_bin_dir }}/traefik"
-        capability: cap_net_bind_service=+ep
-        state: present
+    - name: Extract Traefik binary
+      ansible.builtin.unarchive:
+        src: /var/tmp/traefik-install/traefik.tar.gz
+        dest: "{{ traefik_bin_dir }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+        include:
+          - traefik
+      notify: Restart traefik
 
     - name: Ensure Traefik configuration directory exists
       ansible.builtin.file:
@@ -56,22 +81,53 @@
         state: directory
         owner: root
         group: traefik
-        mode: '0755'
+        mode: "0750"
 
-    - name: Deploy static Traefik configuration file
+    - name: Ensure dynamic configuration directory exists
+      ansible.builtin.file:
+        path: "{{ traefik_config_dir }}/dynamic"
+        state: directory
+        owner: root
+        group: traefik
+        mode: "0750"
+
+    - name: Ensure Traefik state directory exists
+      ansible.builtin.file:
+        path: "{{ traefik_state_dir }}"
+        state: directory
+        owner: traefik
+        group: traefik
+        mode: "0700"
+
+    - name: Ensure ACME storage file exists
+      ansible.builtin.file:
+        path: "{{ traefik_state_dir }}/acme.json"
+        state: touch
+        owner: traefik
+        group: traefik
+        mode: "0600"
+        access_time: preserve
+        modification_time: preserve
+
+    - name: Deploy static Traefik configuration
       ansible.builtin.copy:
         dest: "{{ traefik_config_dir }}/traefik.yml"
         owner: root
         group: traefik
-        mode: '0640'
+        mode: "0640"
         content: |
           api:
             dashboard: true
-            insecure: true # Accessible via port 8080. Turn off in production.
+            insecure: false
 
           entryPoints:
             web:
               address: ":80"
+              http:
+                redirections:
+                  entryPoint:
+                    to: websecure
+                    scheme: https
             websecure:
               address: ":443"
 
@@ -79,28 +135,28 @@
             file:
               directory: "{{ traefik_config_dir }}/dynamic"
               watch: true
+
+          certificatesResolvers:
+            letsencrypt:
+              acme:
+                email: "{{ acme_email }}"
+                storage: "{{ traefik_state_dir }}/acme.json"
+                httpChallenge:
+                  entryPoint: web
       notify: Restart traefik
 
-    - name: Ensure dynamic configurations directory exists
-      ansible.builtin.file:
-        path: "{{ traefik_config_dir }}/dynamic"
-        state: directory
-        owner: root
-        group: traefik
-        mode: '0755'
-
-    - name: Deploy systemd service unit file
+    - name: Deploy Traefik systemd service
       ansible.builtin.copy:
         dest: /etc/systemd/system/traefik.service
         owner: root
         group: root
-        mode: '0644'
+        mode: "0644"
         content: |
           [Unit]
           Description=Traefik Proxy
-          Documentation=https://doc.traefik.io
-          After=network.target network-online.target
+          Documentation=https://doc.traefik.io/traefik/
           Wants=network-online.target
+          After=network-online.target
 
           [Service]
           Type=simple
@@ -108,26 +164,44 @@
           Group=traefik
           ExecStart={{ traefik_bin_dir }}/traefik --configfile={{ traefik_config_dir }}/traefik.yml
           Restart=on-failure
+          RestartSec=5s
           LimitNOFILE=65536
 
-          # Sandboxing flags for added security
+          AmbientCapabilities=CAP_NET_BIND_SERVICE
+          CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+          NoNewPrivileges=true
+
           PrivateTmp=true
-          ProtectSystem=full
-          ReadWritePaths={{ traefik_config_dir }}
+          PrivateDevices=true
+          ProtectHome=true
+          ProtectSystem=strict
+          ProtectKernelTunables=true
+          ProtectKernelModules=true
+          ProtectControlGroups=true
+          RestrictSUIDSGID=true
+          ReadOnlyPaths={{ traefik_config_dir }}
+          ReadWritePaths={{ traefik_state_dir }}
 
           [Install]
           WantedBy=multi-user.target
-      notify: Restart traefik
+      notify:
+        - Reload systemd
+        - Restart traefik
 
-    - name: Force systemd to re-read unit files and enable Traefik
+    - name: Enable and start Traefik
       ansible.builtin.systemd:
         name: traefik
-        daemon_reload: yes
-        enabled: yes
+        daemon_reload: true
+        enabled: true
         state: started
 
   handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
     - name: Restart traefik
       ansible.builtin.systemd:
         name: traefik
         state: restarted
+
