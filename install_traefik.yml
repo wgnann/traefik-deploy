@@ -11,9 +11,7 @@
     traefik_state_dir: "/var/lib/traefik"
     traefik_log_dir: "/var/log/traefik"
 
-    # Set these for your deployment.
     acme_email: "admin@ime.usp.br"
-    # SHA-256 of the matching Traefik release archive.
     traefik_archive_sha256: "759a7bc0d66b74c588255ed9e41c7f9d4aba60bdb7bce9dde551b1268a55eb07"
 
   tasks:
@@ -58,7 +56,7 @@
     - name: Download and verify Traefik release archive
       ansible.builtin.get_url:
         url: "https://github.com/traefik/traefik/releases/download/v{{ traefik_version }}/traefik_v{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
-        dest: "/var/tmp/traefik-install/traefik.tar.gz"
+        dest: /var/tmp/traefik-install/traefik.tar.gz
         checksum: "sha256:{{ traefik_archive_sha256 }}"
         owner: root
         group: root
@@ -163,23 +161,24 @@
                   entryPoint: web
       notify: Restart traefik
 
-    - name: Deploy logrotate policy for Traefik
+    - name: Deploy access-log rotation policy
       ansible.builtin.copy:
         dest: /etc/logrotate.d/traefik
         owner: root
         group: root
         mode: "0644"
         content: |
-          {{ traefik_log_dir }}/*.log {
+          {{ traefik_log_dir }}/access.log {
               daily
               rotate 14
               missingok
               notifempty
               compress
               delaycompress
+              create 0640 traefik traefik
               sharedscripts
               postrotate
-                  /bin/systemctl kill -s HUP traefik.service
+                  /bin/systemctl kill --kill-whom=main --signal=USR1 traefik.service
               endscript
           }
 

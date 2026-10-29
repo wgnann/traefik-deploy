@@ -1,3 +1,7 @@
+bug fix (luna @ duck.ai)
+- I have the following ansible playbook. logrotate is not working properly.
+- generate the corrected playbook
+
 hardening (gemini @ google)
 - I have an ansible playbook to install traefik in a VM (no docker allowed). Need to prepare it for production
 
