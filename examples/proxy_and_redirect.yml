@@ -1,0 +1,32 @@
+http:
+  routers:
+    www-users:
+      rule: "Host(`www.ime.usp.br`) && PathPrefix(`/~`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - users-redirect
+      service: noop@internal
+      tls:
+        certResolver: letsencrypt
+
+    www-https:
+      rule: "Host(`www.ime.usp.br`)"
+      entryPoints:
+        - websecure
+      service: www
+      tls:
+        certResolver: letsencrypt
+
+  middlewares:
+    users-redirect:
+      redirectRegex:
+        regex: "^https://www.ime.usp.br"
+        replacement: "https://users.ime.usp.br"
+        permanent: true
+
+  services:
+    www:
+      loadBalancer:
+        servers:
+          - url: "http://10.2.0.165"

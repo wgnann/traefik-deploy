@@ -1,0 +1,15 @@
+tcp:
+  routers:
+    nginx-https:
+      rule: "ClientIP(`143.107.0.0/16`)"
+      entryPoints:
+        - websecure
+      service: nginx
+      tls:
+        passthrough: true
+
+  services:
+    nginx:
+      loadBalancer:
+        servers:
+          - address: "10.2.0.123:443"

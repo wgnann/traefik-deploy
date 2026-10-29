@@ -1,0 +1,15 @@
+http:
+  routers:
+    users-https:
+      rule: "Host(`users.ime.usp.br`)"
+      entryPoints:
+        - websecure
+      service: users
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    users:
+      loadBalancer:
+        servers:
+          - url: "http://10.2.0.62"
